@@ -174,8 +174,6 @@ class LaneServoingNode(DTROS):
             cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), 0.1, rt_mask.astype(np.uint8), 0.8, 0
         )
 
-        # (debug scalars removed)
-
         lt_mask_viz = rgb_to_compressed_imgmsg(cv2.cvtColor(lt_mask_viz, cv2.COLOR_GRAY2RGB), "jpeg")
         rt_mask_viz = rgb_to_compressed_imgmsg(cv2.cvtColor(rt_mask_viz, cv2.COLOR_GRAY2RGB), "jpeg")
 
