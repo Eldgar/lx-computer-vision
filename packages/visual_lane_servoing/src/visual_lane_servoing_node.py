@@ -7,7 +7,7 @@ import time
 import rospy
 import numpy as np
 
-from duckietown_msgs.msg import Twist2DStamped, EpisodeStart
+from duckietown_msgs.msg import Twist2DStamped
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
 
@@ -43,7 +43,7 @@ class LaneServoingNode(DTROS):
         # The following are used for scaling
         self.steer_max = -1
 
-        w, h = 640, 480
+        w, _h = 640, 480
 
         # TODO: you can play with these values to modify the horizontal field-of-view of the agent
         left = 0.1
@@ -54,14 +54,19 @@ class LaneServoingNode(DTROS):
         self.VLS_STOPPED = True
 
         # Defining subscribers:
-        rospy.Subscriber(
+        # Subscribe to rectified image first; will fall back to raw if no data
+        self.image_sub = rospy.Subscriber(
             f"/{self.veh}/rectifier_node/image/compressed",
             CompressedImage,
             self.cb_image,
             buff_size=10000000,
             queue_size=1,
         )
-
+        
+        self.using_rectified = True
+        self.image_timeout   = 2.0  # seconds without image before fallback
+        self.last_image_time = rospy.Time.now()
+        rospy.Timer(rospy.Duration(self.image_timeout), self._check_image_timer)
         # select the current activity
         rospy.Subscriber(f"/{self.veh}/vls_node/action", String, self.cb_action, queue_size=1)
 
@@ -137,6 +142,7 @@ class LaneServoingNode(DTROS):
             image_msg (:obj:`sensor_msgs.msg.CompressedImage`): The received image message
 
         """
+        self.last_image_time = rospy.Time.now()
         image = compressed_imgmsg_to_rgb(image_msg)
         # Resize the image to the desired dimensionsS
         height_original, width_original = image.shape[0:2]
@@ -167,6 +173,8 @@ class LaneServoingNode(DTROS):
         rt_mask_viz = cv2.addWeighted(
             cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), 0.1, rt_mask.astype(np.uint8), 0.8, 0
         )
+
+        # (debug scalars removed)
 
         lt_mask_viz = rgb_to_compressed_imgmsg(cv2.cvtColor(lt_mask_viz, cv2.COLOR_GRAY2RGB), "jpeg")
         rt_mask_viz = rgb_to_compressed_imgmsg(cv2.cvtColor(rt_mask_viz, cv2.COLOR_GRAY2RGB), "jpeg")
@@ -270,6 +278,25 @@ class LaneServoingNode(DTROS):
             return readFile(fname)
         else:
             return readFile(fname)
+
+    def _check_image_timer(self, event):
+        """Timer callback: if no images received from rectifier, fall back to raw camera."""
+        if self.using_rectified:
+            dt = (rospy.Time.now() - self.last_image_time).to_sec()
+            if dt > self.image_timeout:
+                self.logwarn("No rectified images for %.1fs - subscribing to raw camera stream" % dt)
+                try:
+                    self.image_sub.unregister()
+                except Exception:
+                    pass
+                self.image_sub = rospy.Subscriber(
+                    f"/{self.veh}/camera_node/image/compressed",
+                    CompressedImage,
+                    self.cb_image,
+                    buff_size=10000000,
+                    queue_size=1,
+                )
+                self.using_rectified = False
 
     def on_shutdown(self):
         self.loginfo("Stopping motors...")
